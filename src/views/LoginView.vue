@@ -5,7 +5,7 @@ import axios from 'axios'
 import { LockKeyhole } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { toast } from 'vue-sonner'
-import ThemeToggle from '@/components/ThemeToggle.vue' // [新增]
+import ThemeToggle from '@/components/ThemeToggle.vue'
 
 const password = ref('')
 const loading = ref(false)
@@ -26,10 +26,16 @@ const handleLogin = async () => {
       const redirect = (router.currentRoute.value.query.redirect as string) || '/'
       router.replace(redirect)
     } else {
-      toast.error(data.msg || '口令错误')
+      // 这里处理状态码为 200 但业务逻辑错误的情况
+      toast.error(data.msg || '口令错误，请重新输入')
     }
-  } catch (e) {
-    toast.error('验证请求失败，请检查网络')
+  } catch (error: any) {
+    // 核心修正：捕获 403 状态码（后端口令校验失败会返回 403）
+    if (error.response && error.response.status === 403) {
+      toast.error('口令错误，请重新输入')
+    } else {
+      toast.error('验证请求失败，请检查网络')
+    }
   } finally {
     loading.value = false
   }
