@@ -21,30 +21,7 @@
 
 ## 快速开始
 
-### 环境要求
 
-- Node.js >= 20.19.0 或 >= 22.12.0
-- pnpm >= 10.18.2
-
-### 安装依赖
-
-```sh
-pnpm install
-```
-
-### 开发运行
-
-```sh
-pnpm dev
-```
-
-访问 http://localhost:5173 即可使用。
-
-### 构建生产版本
-
-```sh
-pnpm build
-```
 
 ## 环境配置
 
@@ -68,19 +45,3 @@ SITE_PASSWORD=设置口令验证
 4. 点击“生成Token”按钮，复制生成的Token。
 
 
-## 项目结构
-
-```
-hw-img-host/
-├── src/                    # 前端源码
-│   ├── components/         # Vue 组件
-│   ├── views/              # 页面视图
-│   └── router/             # 路由配置
-├── node-functions/         # 后端 API
-│   └── api/                # Express 路由
-└── public/                 # 静态资源
-```
-
-## 贡献
-
-欢迎提交 issue 或 pull request 贡献代码！
