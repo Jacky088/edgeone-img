@@ -26,11 +26,9 @@ const handleLogin = async () => {
       const redirect = (router.currentRoute.value.query.redirect as string) || '/'
       router.replace(redirect)
     } else {
-      // 这里处理状态码为 200 但业务逻辑错误的情况
       toast.error(data.msg || '口令错误，请重新输入')
     }
   } catch (error: any) {
-    // 核心修正：捕获 403 状态码（后端口令校验失败会返回 403）
     if (error.response && error.response.status === 403) {
       toast.error('口令错误，请重新输入')
     } else {
@@ -43,34 +41,40 @@ const handleLogin = async () => {
 </script>
 
 <template>
-  <div class="relative flex min-h-screen items-center justify-center bg-gray-50 px-4 dark:bg-gray-950 transition-colors duration-300">
+  <div class="aurora-bg relative flex min-h-screen items-center justify-center px-4 transition-colors duration-300">
     
     <div class="absolute right-6 top-6">
       <ThemeToggle />
     </div>
 
     <div
-      class="w-full max-w-sm rounded-2xl border border-gray-100 bg-white p-8 text-center shadow-sm transition-colors dark:border-gray-800 dark:bg-gray-900"
+      class="glass-card w-full max-w-sm rounded-3xl p-10 text-center"
     >
       <div
-        class="mx-auto mb-6 flex h-12 w-12 items-center justify-center rounded-full bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400"
+        class="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-blue-50 text-blue-600 shadow-sm dark:bg-blue-900/30 dark:text-blue-400"
       >
-        <LockKeyhole class="h-6 w-6" />
+        <LockKeyhole class="h-8 w-8" />
       </div>
 
-      <h1 class="mb-2 text-xl font-semibold text-gray-900 dark:text-gray-100">访问受限</h1>
-      <p class="mb-6 text-sm text-gray-500 dark:text-gray-400">请输入访问口令以继续使用图床服务</p>
+      <h1 class="mb-2 text-2xl font-bold text-gray-900 dark:text-gray-100">访问受限</h1>
+      <p class="mb-8 text-sm text-gray-500 dark:text-gray-400">请输入访问口令以继续使用图床服务</p>
 
-      <div class="space-y-4">
+      <div class="space-y-5">
         <input
           v-model="password"
           type="password"
           placeholder="请输入口令..."
-          class="w-full rounded-md border border-gray-200 bg-transparent h-10 px-3 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-gray-800 dark:text-gray-100 dark:focus:border-blue-400 dark:focus:ring-blue-400/20 dark:placeholder-gray-500"
+          class="w-full h-12 rounded-xl border border-gray-200 bg-white/50 px-4 text-base outline-none transition-all focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10 dark:border-gray-700 dark:bg-gray-800/50 dark:text-gray-100 dark:focus:bg-gray-800 dark:placeholder-gray-500"
           @keyup.enter="handleLogin"
         />
 
-        <Button class="w-full" @click="handleLogin" :disabled="loading">
+        <Button 
+          class="w-full h-12 rounded-xl text-base font-bold text-white shadow-lg shadow-blue-500/30 transition-all 
+                 bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500
+                 hover:-translate-y-0.5 active:translate-y-0 active:shadow-sm"
+          @click="handleLogin" 
+          :disabled="loading"
+        >
           {{ loading ? '验证中...' : '解锁访问' }}
         </Button>
       </div>
