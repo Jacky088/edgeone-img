@@ -21,7 +21,11 @@
 
 ## 快速开始
 
+### 一键部署
 
+[![使用国内版EdgeOne Pages 部署](https://cdnstatic.tencentcs.com/edgeone/pages/deploy.svg)](https://console.cloud.tencent.com/edgeone/pages/new?repository-url=https%3A%2F%2Fgithub.com%2Fhobk%2Feo-short%2F)（国内版）
+
+[![使用国际版EdgeOne Pages 部署](https://cdnstatic.tencentcs.com/edgeone/pages/deploy.svg)](https://edgeone.ai/pages/new?repository-url=https%3A%2F%2Fgithub.com%2Fhobk%2Feo-short%2F)（国际版）
 
 ## 环境配置
 
@@ -29,18 +33,18 @@
 
 ```env
 BASE_IMG_URL=你的图床域名，结尾带斜杠，例如：https://img.example.com/
-SLUG_IMG=CNB图床仓库名，例如：your-username/your-repo
-TOKEN_IMG=CNB图床仓库Token
+SLUG_IMG=CNB图床仓库名，例如：组织名/仓库名
+TOKEN_IMG=CNB图床仓库Token令牌
 SITE_PASSWORD=设置口令验证
 ```
 
-## 获取 TOKEN_IMG
+## 获取 TOKEN
 
 1. 登录 [CNB官网](https://cnb.cool/) 右上角头像点击 个人设置。
 
-2. 选择“访问令牌”，找到你的图床仓库（自己创建一个空仓库即可）。
+2. 选择“访问令牌”，找到你的图床仓库（需要先创建一个空仓库，必须设为公开）。
 
-3. 授权范围全部选最大（不放心自己研究官方文档）。
+3. 授权范围全部选读写最大。
 
 4. 点击“生成Token”按钮，复制生成的Token。
 
