@@ -1,183 +1,167 @@
 import express from 'express'
-import { createProxyHandler } from './_utils' // 只保留 createProxyHandler
+// 直接从 _utils 引入所有功能，不新增文件，确保稳定
+import { uploadToCnb, deleteFromCnb, createProxyHandler, PACKAGE_NAME, PACKAGE_VERSION } from './_utils'
 import { reply } from './_reply'
-import { store, type ImageRecord } from './_store'
+import { store } from './_store' // 保持引用你那个能跑的 _store
 import multer from 'multer'
-// [新增] 引入新模块，专门处理物理存储
-import { uploadToGenericPackage, deleteFromGenericPackage, getGenericPackageBaseUrl } from './_cnb_api'
-// [新增] 引入 crypto 生成唯一ID
-import crypto from 'crypto'
 import path from 'path'
+
+// 使用 require 引入 crypto，避免 import 兼容性问题
+const crypto = require('crypto')
 
 const upload = multer()
 const app = express()
 
+// 构造制品库的 Base URL
+// 结果类似: https://api.cnb.cool/user/repo/-/packages/generic/imgbed-storage/v1/
+const REMOTE_BASE_URL = `https://api.cnb.cool/${process.env.SLUG_IMG}/-/packages/generic/${PACKAGE_NAME}/${PACKAGE_VERSION}/`
+
 const requestConfig = {
-  responseType: 'arraybuffer',
-  timeout: 10000,
+  timeout: 15000,
   headers: {
-    // 如果仓库是私有的，必须带 Token
-    'Authorization': `Bearer ${process.env.TOKEN_IMG}`, 
+    'Authorization': `Bearer ${process.env.TOKEN_IMG}`,
     'User-Agent': 'ImgBed-Proxy/2.0',
   },
 }
 
-// [修改] 现在的远程 Base URL 变成了制品库地址
-const BASE_URL = getGenericPackageBaseUrl()
-
 app.use(express.json())
 
-app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`)
-  next()
-})
-
-app.get('/', (req, res) => {
-  res.json({ message: 'Hello from Express on Node Functions!' })
-})
-
+// 1. 身份验证接口 (放在最前，确保任何时候都能访问)
 app.post('/auth/verify', (req, res) => {
-  const { password } = req.body
-  const sysPassword = process.env.SITE_PASSWORD
-  if (!sysPassword) {
-    return res.json(reply(0, '未设置密码，开放访问', { token: 'open-access' }))
-  }
-  if (password === sysPassword) {
-    return res.json(reply(0, '验证通过', { token: 'authorized' }))
-  } else {
-    return res.status(403).json(reply(403, '口令错误', null))
+  try {
+    const { password } = req.body
+    const sysPassword = process.env.SITE_PASSWORD
+    
+    if (!sysPassword) {
+      return res.json(reply(0, 'Open Access', { token: 'open' }))
+    }
+    if (password === sysPassword) {
+      return res.json(reply(0, 'Success', { token: 'auth' }))
+    }
+    return res.status(403).json(reply(403, 'Password Error', null))
+  } catch (e) {
+    res.status(500).json(reply(500, 'Auth System Error', null))
   }
 })
 
+// 2. 获取列表
 app.get('/admin/list', (req, res) => {
+  // 同步读取，稳定
   const list = store.getAll()
-  res.json(reply(0, '获取成功', list))
+  res.json(reply(0, 'ok', list))
 })
 
-// [修改] 删除接口：接入物理删除逻辑
+// 3. [核心] 物理删除接口
 app.post('/admin/delete', async (req, res) => {
   const { id } = req.body
-  if (!id) return res.status(400).json(reply(1, 'ID不能为空', null))
-
-  // 1. 查库
-  const list = store.getAll()
-  const target = list.find(item => item.id === id)
-
-  if (!target) {
-    // 如果数据库里没有，尝试做一次兜底删除（仅删记录）
-    store.remove(id)
-    return res.json(reply(0, '记录已清理(文件不存在)', null))
-  }
+  if (!id) return res.status(400).json(reply(1, 'No ID', null))
 
   try {
-    // 2. 执行物理删除 (Generic Package)
-    // 逻辑：我们需要知道云端文件名。在新上传逻辑中，云端文件名 = id + 后缀
-    // 为了稳健，我们尝试构造文件名
+    const list = store.getAll()
+    const target = list.find(item => item.id === id)
+
+    if (!target) {
+      store.remove(id) // 清理死数据
+      return res.json(reply(0, 'Record removed', null))
+    }
+
+    // 物理删除主图 (文件名 = ID + 后缀)
     const ext = path.extname(target.name) || '.png'
     const cloudFileName = `${target.id}${ext}`
     
-    await deleteFromGenericPackage(cloudFileName).catch(e => {
-      console.warn('物理删除主图失败(可能是旧版数据):', e.message)
-    })
+    await deleteFromCnb(cloudFileName).catch(e => console.warn('Remote delete warn:', e.message))
 
-    // 删除缩略图
+    // 物理删除缩略图
     if (target.thumbnailUrl) {
-      const thumbName = `${target.id}_thumb.webp`
-      await deleteFromGenericPackage(thumbName).catch(() => {})
+       const thumbFileName = `${target.id}_thumb.webp`
+       await deleteFromCnb(thumbFileName).catch(() => {})
     }
 
-    // 3. 删除数据库记录
+    // 删除数据库记录
     store.remove(id)
-    res.json(reply(0, '物理删除成功', null))
-
-  } catch (e: any) {
+    res.json(reply(0, 'Delete Success', null))
+  } catch (e) {
     console.error('Delete Error:', e)
-    res.status(500).json(reply(1, '删除失败: ' + e.message, null))
+    res.status(500).json(reply(1, 'Delete Failed', null))
   }
 })
 
-// [修改] 路由匹配规则：兼容 /api/img/xxx
-// 使用正则匹配，捕获 /img/ 之后的所有内容作为 path 参数
-app.get(/^\/img\/(.+)/, (req, res) => {
-  // 手动设置 params.path，供 createProxyHandler 使用
-  req.params.path = req.params[0] 
-  return createProxyHandler(BASE_URL, requestConfig)(req, res)
+// 4. 图片代理路由 (匹配 /api/image/xxxx)
+app.get('/image/:path(*)', (req, res) => {
+  // 直接把请求转给 _utils 里的 handler
+  return createProxyHandler(REMOTE_BASE_URL, requestConfig)(req, res)
 })
 
-app.post(
-  '/upload/img',
-  upload.fields([
-    { name: 'file', maxCount: 1 },
-    { name: 'thumbnail', maxCount: 1 },
-  ]),
-  async (req, res) => {
-    try {
-      const files = req.files as { [fieldname: string]: Express.Multer.File[] }
-      if (!files || !files.file) {
-        return res.status(400).json(reply(1, '未上传文件', ''))
-      }
-
-      const mainFile = files.file?.[0]
-      const thumbnailFile = files.thumbnail?.[0]
-
-      // [修改] 生成唯一ID作为文件名 (UUID)
-      // 这样做的好处是文件名可预测，方便后续删除
-      const fileId = crypto.randomUUID()
-      const fileExt = path.extname(mainFile.originalname) || '.png'
-      const cloudMainName = `${fileId}${fileExt}`
-
-      // [修改] 使用新的上传接口
-      await uploadToGenericPackage(mainFile.buffer, cloudMainName)
-
-      // [修改] 链接拼接逻辑
-      let baseUrl = process.env.BASE_IMG_URL || ''
-      if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1)
-
-      // 代理链接: https://域名/api/img/uuid.png
-      const mainUrl = `${baseUrl}/api/img/${cloudMainName}`
-      // 直连链接
-      const mainUrlOriginal = `${BASE_URL}${cloudMainName}`
-
-      let thumbnailUrl = null
-      let thumbnailOriginalUrl = null
-
-      if (thumbnailFile) {
-        const cloudThumbName = `${fileId}_thumb.webp`
-        await uploadToGenericPackage(thumbnailFile.buffer, cloudThumbName)
-        
-        thumbnailUrl = `${baseUrl}/api/img/${cloudThumbName}`
-        thumbnailOriginalUrl = `${BASE_URL}${cloudThumbName}`
-      }
-
-      const record: ImageRecord = {
-        id: fileId,
-        name: mainFile.originalname,
-        url: mainUrl,
-        urlOriginal: mainUrlOriginal,
-        thumbnailUrl: thumbnailUrl || undefined,
-        thumbnailOriginalUrl: thumbnailOriginalUrl || undefined,
-        size: mainFile.size,
-        type: mainFile.mimetype,
-        createdAt: Date.now(),
-      }
-      store.add(record)
-
-      res.json(
-        reply(0, '上传成功', {
-          url: mainUrl,
-          thumbnailUrl: thumbnailUrl,
-          urlOriginal: mainUrlOriginal,
-          thumbnailOriginalUrl: thumbnailOriginalUrl,
-          // 兼容旧前端字段，防止报错
-          assets: { path: '/' + cloudMainName }, 
-          thumbnailAssets: { path: '/' + (thumbnailOriginalUrl ? 'thumb' : '') } 
-        }),
-      )
-    } catch (err: any) {
-      console.error('上传失败:', err.message)
-      res.status(500).json(reply(1, '上传失败: ' + err.message))
+// 5. 上传接口
+app.post('/upload/img', upload.fields([{ name: 'file' }, { name: 'thumbnail' }]), async (req, res) => {
+  try {
+    const files = req.files
+    if (!files || !files.file || files.file.length === 0) {
+      return res.status(400).json(reply(1, 'No File', ''))
     }
-  },
-)
+
+    const mainFile = files.file[0]
+    const thumbFile = files.thumbnail ? files.thumbnail[0] : null
+    
+    // 生成 UUID 作为文件名，这是物理删除的关键
+    const fileId = crypto.randomUUID()
+    const fileExt = path.extname(mainFile.originalname) || '.png'
+    const cloudMainName = `${fileId}${fileExt}`
+
+    // 上传主图
+    await uploadToCnb({
+      fileBuffer: mainFile.buffer,
+      fileName: cloudMainName,
+    })
+
+    // 拼接链接
+    let baseUrl = process.env.BASE_IMG_URL || ''
+    if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1)
+    
+    // 代理链接: /api/image/uuid.jpg
+    const mainUrl = `${baseUrl}/api/image/${cloudMainName}`
+    // 直连链接: 这里的 REMOTE_BASE_URL 已经是制品库地址了
+    const mainUrlOriginal = `${REMOTE_BASE_URL}${cloudMainName}`
+
+    let thumbnailUrl = null
+    let thumbnailOriginalUrl = null
+
+    // 上传缩略图
+    if (thumbFile) {
+      const cloudThumbName = `${fileId}_thumb.webp`
+      await uploadToCnb({
+        fileBuffer: thumbFile.buffer,
+        fileName: cloudThumbName,
+      })
+      thumbnailUrl = `${baseUrl}/api/image/${cloudThumbName}`
+      thumbnailOriginalUrl = `${REMOTE_BASE_URL}${cloudThumbName}`
+    }
+
+    // 写入本地数据库
+    const record = {
+      id: fileId,
+      name: mainFile.originalname,
+      url: mainUrl,
+      urlOriginal: mainUrlOriginal,
+      thumbnailUrl: thumbnailUrl,
+      thumbnailOriginalUrl: thumbnailOriginalUrl,
+      size: mainFile.size,
+      type: mainFile.mimetype,
+      createdAt: Date.now(),
+    }
+    store.add(record)
+
+    res.json(reply(0, 'Upload Success', {
+      url: mainUrl,
+      thumbnailUrl: thumbnailUrl,
+      urlOriginal: mainUrlOriginal,
+      thumbnailOriginalUrl: thumbnailOriginalUrl
+    }))
+
+  } catch (err) {
+    console.error('Upload Error:', err)
+    res.status(500).json(reply(1, 'Upload Failed: ' + err.message, null))
+  }
+})
 
 export default app
