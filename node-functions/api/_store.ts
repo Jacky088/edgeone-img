@@ -1,29 +1,25 @@
 import fs from 'fs'
 import path from 'path'
 
-// 使用 /tmp 目录，确保在 Serverless 环境下有写入权限
-// 注意：EdgeOne Pages 重启后数据会重置，但这是最稳定的不报错方案
-const DB_PATH = path.resolve('/tmp', 'images.json')
+const DB_PATH = path.resolve(__dirname, 'images.json')
 
 export interface ImageRecord {
   id: string
   name: string
   url: string
-  urlOriginal?: string
   thumbnailUrl?: string
-  thumbnailOriginalUrl?: string
   size: number
   type: string
   createdAt: number
 }
 
 // 初始化数据库文件
-try {
-  if (!fs.existsSync(DB_PATH)) {
+if (!fs.existsSync(DB_PATH)) {
+  try {
     fs.writeFileSync(DB_PATH, JSON.stringify([]))
+  } catch (e) {
+    console.warn('Could not create local DB file (Might be Read-Only environment):', e)
   }
-} catch (e) {
-  console.warn('DB init warning:', e)
 }
 
 export const store = {
@@ -33,7 +29,6 @@ export const store = {
       const data = fs.readFileSync(DB_PATH, 'utf-8')
       return JSON.parse(data || '[]')
     } catch (e) {
-      console.error('Store read error:', e)
       return []
     }
   },
@@ -41,11 +36,12 @@ export const store = {
   add: (record: ImageRecord) => {
     try {
       const list = store.getAll()
-      list.unshift(record)
+      list.unshift(record) // 新图片排前面
+      // 限制最大记录数，防止文件过大（例如保留最近1000条）
       if (list.length > 1000) list.pop()
       fs.writeFileSync(DB_PATH, JSON.stringify(list, null, 2))
     } catch (e) {
-      console.error('Store add error:', e)
+      console.error('Failed to save image record:', e)
     }
   },
 
@@ -55,7 +51,7 @@ export const store = {
       list = list.filter(item => item.id !== id)
       fs.writeFileSync(DB_PATH, JSON.stringify(list, null, 2))
     } catch (e) {
-      console.error('Store remove error:', e)
+      console.error('Failed to remove image record:', e)
     }
   }
 }
