@@ -1,12 +1,11 @@
-import fs from 'fs'
-import path from 'path'
+import { PACKAGE_NAME, PACKAGE_VERSION } from './_utils'
 
-// 数据库文件路径：在 EdgeOne Serverless 环境中，通常 /tmp 是可写的
-// 我们尝试在当前目录或 /tmp 目录下创建
-const DB_FILE = 'images.json'
-const DB_PATH = path.resolve(__dirname, DB_FILE)
+// 定义远程数据库文件名
+const DB_FILENAME = 'database.json'
 
-// 定义数据结构
+// 内存缓存 (Serverless 实例存活期间可用，减少请求次数)
+let memoryCache: ImageRecord[] | null = null
+
 export interface ImageRecord {
   id: string
   name: string
@@ -19,54 +18,95 @@ export interface ImageRecord {
   createdAt: number
 }
 
-// 初始化逻辑
-function initDB() {
-  if (!fs.existsSync(DB_PATH)) {
-    try {
-      fs.writeFileSync(DB_PATH, JSON.stringify([]))
-    } catch (e) {
-      // 如果当前目录不可写（常见于Serverless），尝试使用 /tmp
-      // 注意：Serverless 的 /tmp 是临时的，实例重启数据会丢失。
-      // 但这是无数据库环境下的妥协方案。如果需要持久化，建议对接外部数据库（如 Redis/MySQL）。
-      console.warn('Local DB write failed, using memory/tmp might be needed:', e)
+// 内部辅助：从 CNB 下载数据库
+async function fetchDB(): Promise<ImageRecord[]> {
+  const slug = process.env.SLUG_IMG
+  // 构造制品库文件直链
+  const url = `https://api.cnb.cool/${slug}/-/packages/generic/${PACKAGE_NAME}/${PACKAGE_VERSION}/${DB_FILENAME}`
+  
+  try {
+    const resp = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${process.env.TOKEN_IMG}`,
+        // 禁用缓存，确保拿到最新数据
+        'Cache-Control': 'no-cache' 
+      }
+    })
+
+    if (resp.status === 404) {
+      return [] // 文件不存在，返回空数组
     }
+
+    if (!resp.ok) {
+      console.warn('Fetch DB failed:', resp.status)
+      return []
+    }
+
+    const data = await resp.json()
+    return Array.isArray(data) ? data : []
+  } catch (e) {
+    console.error('Fetch DB error:', e)
+    return []
+  }
+}
+
+// 内部辅助：上传数据库到 CNB
+async function saveDB(data: ImageRecord[]) {
+  const slug = process.env.SLUG_IMG
+  const url = `https://api.cnb.cool/${slug}/-/packages/generic/${PACKAGE_NAME}/${PACKAGE_VERSION}/${DB_FILENAME}`
+  
+  try {
+    const jsonString = JSON.stringify(data, null, 2)
+    
+    // 使用 PUT 覆盖上传
+    await fetch(url, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${process.env.TOKEN_IMG}`,
+        'Content-Type': 'application/json',
+      },
+      body: jsonString,
+    })
+  } catch (e) {
+    console.error('Save DB error:', e)
   }
 }
 
 export const store = {
-  getAll: (): ImageRecord[] => {
-    try {
-      if (!fs.existsSync(DB_PATH)) return []
-      const data = fs.readFileSync(DB_PATH, 'utf-8')
-      return JSON.parse(data || '[]')
-    } catch (e) {
-      console.error('Read DB failed:', e)
-      return []
-    }
+  // 获取数据（优先读缓存，无缓存读远程）
+  // 注意：这里变成了 async 方法，default.ts 调用处需要适配
+  getAll: async (): Promise<ImageRecord[]> => {
+    if (memoryCache) return memoryCache
+    
+    const data = await fetchDB()
+    memoryCache = data
+    return data
   },
 
-  add: (record: ImageRecord) => {
-    try {
-      const list = store.getAll()
-      list.unshift(record)
-      // 限制最大条数防止文件过大
-      if (list.length > 2000) list.pop()
-      fs.writeFileSync(DB_PATH, JSON.stringify(list, null, 2))
-    } catch (e) {
-      console.error('Write DB failed:', e)
-    }
+  // 添加数据
+  add: async (record: ImageRecord) => {
+    // 1. 确保拿到最新数据
+    let list = await store.getAll()
+    
+    // 2. 更新列表
+    list.unshift(record)
+    if (list.length > 2000) list.pop() // 限制条数
+    
+    // 3. 更新缓存
+    memoryCache = list
+    
+    // 4. 持久化到云端 (不等待，异步执行防止阻塞响应)
+    // 注意：在高并发下可能会有覆盖风险，但个人图床通常没问题
+    saveDB(list)
   },
 
-  remove: (id: string) => {
-    try {
-      let list = store.getAll()
-      list = list.filter(item => item.id !== id)
-      fs.writeFileSync(DB_PATH, JSON.stringify(list, null, 2))
-    } catch (e) {
-      console.error('Delete DB failed:', e)
-    }
+  // 删除数据
+  remove: async (id: string) => {
+    let list = await store.getAll()
+    const newList = list.filter(item => item.id !== id)
+    
+    memoryCache = newList
+    saveDB(newList)
   }
 }
-
-// 初始化
-initDB()
