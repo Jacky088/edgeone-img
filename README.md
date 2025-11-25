@@ -51,4 +51,4 @@ SITE_PASSWORD=设置口令验证
 
 ## 感谢
 
-WhY15w的hw-img-host(https://github.com/WhY15w/hw-img-host)
+[WhY15w的hw-img-host](https://github.com/WhY15w/hw-img-host)
