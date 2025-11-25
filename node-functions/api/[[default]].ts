@@ -4,12 +4,12 @@ import { reply } from './_reply'
 import { store, type ImageRecord } from './_store'
 import multer from 'multer'
 import path from 'path'
-// [修复] 去掉 node: 前缀，提升兼容性
-import crypto from 'crypto' 
+import crypto from 'crypto' // 使用最通用的引用方式
 
 const upload = multer()
 const app = express()
 
+// 构造远程制品库基础 URL
 const REMOTE_BASE_URL = `https://api.cnb.cool/${process.env.SLUG_IMG}/-/packages/generic/${PACKAGE_NAME}/${PACKAGE_VERSION}/`
 
 const requestConfig = {
@@ -28,7 +28,12 @@ app.use((req, res, next) => {
   next()
 })
 
-// 身份验证接口 (不需要 store，最优先处理)
+// 健康检查
+app.get('/', (req, res) => {
+  res.json({ status: 'ok', message: 'ImgBed Service Running' })
+})
+
+// 1. 身份验证接口
 app.post('/auth/verify', (req, res) => {
   try {
     const { password } = req.body
@@ -44,22 +49,23 @@ app.post('/auth/verify', (req, res) => {
       return res.status(403).json(reply(403, '口令错误', null))
     }
   } catch (e: any) {
-    console.error('Auth error:', e)
-    res.status(500).json(reply(500, '服务内部错误', null))
+    console.error('Auth Error:', e)
+    res.status(500).json(reply(500, 'Server Error', null))
   }
 })
 
-// 管理接口
+// 2. 管理接口
 app.get('/admin/list', async (req, res) => {
   try {
     const list = await store.getAll()
     res.json(reply(0, '获取成功', list))
   } catch (e: any) {
-    console.error('List error:', e)
-    res.status(500).json(reply(500, '获取列表失败', null))
+    console.error('List Error:', e)
+    res.status(500).json(reply(500, 'Get List Error', null))
   }
 })
 
+// 3. 删除接口
 app.post('/admin/delete', async (req, res) => {
   const { id } = req.body
   if (!id) return res.status(400).json(reply(1, 'ID不能为空', null))
@@ -70,10 +76,12 @@ app.post('/admin/delete', async (req, res) => {
 
     if (!target) return res.status(404).json(reply(1, '记录不存在', null))
 
+    // 物理删除主图
     const ext = path.extname(target.name) || '.png'
     const cloudFileName = `${target.id}${ext}`
     await deleteFromCnb(cloudFileName).catch(e => console.warn('Main file delete warn:', e))
 
+    // 物理删除缩略图
     if (target.thumbnailUrl) {
        const thumbFileName = `${target.id}_thumb.webp`
        await deleteFromCnb(thumbFileName).catch(e => console.warn('Thumb delete warn:', e))
@@ -87,13 +95,13 @@ app.post('/admin/delete', async (req, res) => {
   }
 })
 
-// 代理路由
+// 4. 代理路由
 app.get('/image/:path(*)', (req, res) => {
   const handler = createProxyHandler(REMOTE_BASE_URL, requestConfig)
   return handler(req, res)
 })
 
-// 上传接口
+// 5. 上传接口
 app.post('/upload/img', upload.fields([{ name: 'file' }, { name: 'thumbnail' }]), async (req, res) => {
   try {
     const files = req.files as { [fieldname: string]: Express.Multer.File[] }
@@ -142,7 +150,6 @@ app.post('/upload/img', upload.fields([{ name: 'file' }, { name: 'thumbnail' }])
       createdAt: Date.now(),
     }
     
-    // 必须等待保存完成
     await store.add(record)
 
     res.json(reply(0, '上传成功', {
