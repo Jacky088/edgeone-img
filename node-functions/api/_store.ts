@@ -1,91 +1,57 @@
-import { PACKAGE_NAME, PACKAGE_VERSION } from './_utils'
+import fs from 'fs'
+import path from 'path'
 
-const DB_FILENAME = 'database.json'
-let memoryCache: ImageRecord[] | null = null
+const DB_PATH = path.resolve(__dirname, 'images.json')
 
 export interface ImageRecord {
   id: string
   name: string
   url: string
-  urlOriginal?: string
   thumbnailUrl?: string
-  thumbnailOriginalUrl?: string
   size: number
   type: string
   createdAt: number
 }
 
-async function fetchDB(): Promise<ImageRecord[]> {
-  const slug = process.env.SLUG_IMG
-  if (!slug) return [] // 防止环境变量未设置导致崩溃
-
-  const url = `https://api.cnb.cool/${slug}/-/packages/generic/${PACKAGE_NAME}/${PACKAGE_VERSION}/${DB_FILENAME}`
-  
+// 初始化数据库文件
+if (!fs.existsSync(DB_PATH)) {
   try {
-    const resp = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${process.env.TOKEN_IMG}`,
-        'Cache-Control': 'no-cache' 
-      }
-    })
-
-    if (resp.status === 404) return []
-    if (!resp.ok) {
-      console.warn('Fetch DB failed status:', resp.status)
-      return []
-    }
-
-    const data = await resp.json()
-    return Array.isArray(data) ? data : []
+    fs.writeFileSync(DB_PATH, JSON.stringify([]))
   } catch (e) {
-    console.error('Fetch DB error:', e)
-    return []
-  }
-}
-
-async function saveDB(data: ImageRecord[]) {
-  const slug = process.env.SLUG_IMG
-  if (!slug) return
-
-  const url = `https://api.cnb.cool/${slug}/-/packages/generic/${PACKAGE_NAME}/${PACKAGE_VERSION}/${DB_FILENAME}`
-  
-  try {
-    const jsonString = JSON.stringify(data, null, 2)
-    
-    await fetch(url, {
-      method: 'PUT',
-      headers: {
-        'Authorization': `Bearer ${process.env.TOKEN_IMG}`,
-        'Content-Type': 'application/json',
-      },
-      body: jsonString,
-    })
-  } catch (e) {
-    console.error('Save DB error:', e)
+    console.warn('Could not create local DB file (Might be Read-Only environment):', e)
   }
 }
 
 export const store = {
-  getAll: async (): Promise<ImageRecord[]> => {
-    if (memoryCache) return memoryCache
-    const data = await fetchDB()
-    memoryCache = data
-    return data
+  getAll: (): ImageRecord[] => {
+    try {
+      if (!fs.existsSync(DB_PATH)) return []
+      const data = fs.readFileSync(DB_PATH, 'utf-8')
+      return JSON.parse(data || '[]')
+    } catch (e) {
+      return []
+    }
   },
 
-  add: async (record: ImageRecord) => {
-    let list = await store.getAll()
-    list.unshift(record)
-    if (list.length > 2000) list.pop()
-    memoryCache = list
-    await saveDB(list)
+  add: (record: ImageRecord) => {
+    try {
+      const list = store.getAll()
+      list.unshift(record) // 新图片排前面
+      // 限制最大记录数，防止文件过大（例如保留最近1000条）
+      if (list.length > 1000) list.pop()
+      fs.writeFileSync(DB_PATH, JSON.stringify(list, null, 2))
+    } catch (e) {
+      console.error('Failed to save image record:', e)
+    }
   },
 
-  remove: async (id: string) => {
-    let list = await store.getAll()
-    const newList = list.filter(item => item.id !== id)
-    memoryCache = newList
-    await saveDB(newList)
+  remove: (id: string) => {
+    try {
+      let list = store.getAll()
+      list = list.filter(item => item.id !== id)
+      fs.writeFileSync(DB_PATH, JSON.stringify(list, null, 2))
+    } catch (e) {
+      console.error('Failed to remove image record:', e)
+    }
   }
 }
